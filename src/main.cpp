@@ -1,3 +1,15 @@
+/*   A IP Notifier that emails when external IP address changes */
+
+/*  Notes - the LED functionality only works properly if Serial is disabled
+    as the onboard LED using the TX pin
+
+    ToDo: Test the 3 modes
+          Test with uploading to new device
+            - do you need to uploadFS first?
+*/
+
+
+
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
@@ -9,35 +21,47 @@
 const char* SPIFFS_DATAFILE = "prevIP.dat";
 const char* IP_HOST = "api.ipify.org";
 const uint16_t IP_PORT = 80;
-//const uint32_t SLEEP_INTERVAL = 1 * 60 * 60 * 1000 * 1000;  // 1 hour in uSeconds
-const uint32_t SLEEP_INTERVAL = 30 * 1000000;
+const uint32_t SLEEP_INTERVAL_MS = 60 * 60 * 1000;  // 1 hour ;
 const char* IFTTT_KEY = "bZYS4W-feP_hGiN5ViibKkcNEF_Y24wdymZPq4HQ5d7";
 const String IFTTT_EVENTNAME = "ipchange";
-const bool ALWAYS_NOTIFY = true;
+const uint16_t PER_DAY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-void deepSleep(const uint32_t interval) {
-  #ifdef ESP01
-    Serial.println("Deepsleep not supported");
-    Serial.print("Delaying for ");
-    Serial.print(interval / 1000000);
-    Serial.print(" seconds");
-    delay(interval/1000);
-    ESP.restart();
-  #else
-    Serial.print("Going to sleep for ");
-    Serial.print(interval / 1000000);
-    Serial.println(" seconds");
-    ESP.deepSleep(interval);
-  #endif
-}
+#define DEBUG 
+
+#ifdef DEBUG
+  #define debugBegin(...) Serial.begin(__VA_ARGS__)
+  #define debugPrint(...) Serial.print(__VA_ARGS__)
+  #define debugPrintln(...) Serial.println(__VA_ARGS__)
+  #define debugPrintf(...) Serial.printf(__VA_ARGS__)
+#else
+  #define debugBegin(...)
+  #define debugPrint(...)
+  #define debugPrintln(...)
+  #define debugPrintf(...)
+#endif
+
+
+/*  Always - send IP notification every interval
+    Per Day - send IP notification once per 24 hours or on change
+    Change Only - send IP notificationn only when there is a new IP
+
+    Note - IP notification will always be sent on initial power on
+*/
+enum NotificationMode {ALWAYS, PER_DAY, CHANGE_ONLY};
+const NotificationMode NOTIFY_MODE = PER_DAY;
 
 void error() {
-    delay(2000);
-    deepSleep(SLEEP_INTERVAL);
+    pinMode(LED_BUILTIN,OUTPUT);
+    while (true) {
+      digitalWrite(LED_BUILTIN,LOW);
+      delay(500);
+      digitalWrite(LED_BUILTIN,HIGH);
+      delay(500);
+    }
 }
 
 void error(const char* errorMsg) {
-  Serial.println(errorMsg);
+  debugPrintln(errorMsg);
   error();
 }
 
@@ -48,7 +72,7 @@ String getPreviousIP() {
   fs::File file = SPIFFS.open(SPIFFS_DATAFILE,"r");
 
   if (!file) {
-    Serial.println("Error opening data file for read");
+    debugPrintln(F("Error opening data file for read"));
   }
   else {
     while (file.available()) {
@@ -76,12 +100,12 @@ String getCurrentIP() {
     client.println(queryString);
     client.println(F("Connection: close"));
     if (client.println() == 0) {
-      Serial.print(F("Failed to send request\r\n"));
+      debugPrint(F("Failed to send request\r\n"));
     }
 
   }
   else {
-    Serial.print(F("connection failed\r\n\r\n")); //error message if no client connect
+    debugPrint(F("connection failed\r\n\r\n")); //error message if no client connect
     error();
   }
 
@@ -89,7 +113,7 @@ String getCurrentIP() {
 
   char endOfHeaders[] = "\r\n\r\n";
   if (!client.find(endOfHeaders)) {
-    Serial.print(F("Invalid response\r\n"));
+    debugPrint(F("Invalid response\r\n"));
     error();
   }
 
@@ -109,7 +133,7 @@ bool saveIP(const String newIP) {
   fs::File file = SPIFFS.open(SPIFFS_DATAFILE,"w");
 
   if (!file) {
-    Serial.println("Error opening data file for write");
+    debugPrintln(F("Error opening data file for write"));
     error();
   }
   else {
@@ -122,32 +146,74 @@ bool saveIP(const String newIP) {
 }
 
 void notifyIP(const String oldIP, const String newIP) {
-  Serial.print("You IP address has changed from ");
-  Serial.print(oldIP);
-  Serial.print(" to ");
-  Serial.println(newIP);
+  debugPrint(F("You IP address has changed from "));
+  debugPrint(oldIP);
+  debugPrint(F(" to "));
+  debugPrintln(newIP);
 
   WiFiClient client;
   IFTTTMaker ifttt(IFTTT_KEY,client);
 
   if (ifttt.triggerEvent(IFTTT_EVENTNAME,newIP,oldIP)) {
-    Serial.println("successfully sent");
+    debugPrintln(F("successfully sent"));
   }
   else {
-    Serial.println("failed to notify");
+    debugPrintln(F("failed to notify"));
   }
+
+}
+
+void indicate(const uint16_t durationMS) {
+  pinMode(LED_BUILTIN,OUTPUT);
+  digitalWrite(LED_BUILTIN,LOW);
+  delay(durationMS);
+  digitalWrite(LED_BUILTIN,HIGH);
+}
+
+void indicateStart() {
+  indicate(5000);
+}
+
+void indicateStop() {
+  indicate(3000);
+}
+
+void notify(const String previousIP, const String currentiP) {
+
+}
+
+void check(const bool mandatoryNotify) {
+
+  static uint32_t dayTimer = 0;
+
+  indicateStart();
+  String currentIP =  getCurrentIP();
+  String previousIP = getPreviousIP();
+
+  debugPrint(F("Current IP: "));
+  debugPrintln(currentIP);
+  debugPrint(F("Previous IP: "));
+  debugPrintln(previousIP);
+
+  if (mandatoryNotify || (NOTIFY_MODE == ALWAYS) || (currentIP.compareTo(previousIP) != 0) || ((NOTIFY_MODE == PER_DAY) && ((millis() - dayTimer) > PER_DAY_INTERVAL_MS)))  {
+    saveIP(currentIP);
+    notifyIP(previousIP,currentIP);
+    dayTimer = millis();
+  }
+  else {
+    debugPrintln(F("no change to IP address"));
+  }
+
+  indicateStop();
 
 }
 
 void setup() {
 
-  pinMode(LED_BUILTIN,OUTPUT);
-  digitalWrite(LED_BUILTIN,LOW);
-  delay(3000);
-  digitalWrite(LED_BUILTIN,HIGH);
+  indicateStart();
 
-  Serial.begin(74880);
-  Serial.println(F("IP Notifier"));
+  debugBegin(74880);
+  debugPrintln(F("IP Notifier"));
 
   WiFiManager wifiManager;
   wifiManager.autoConnect("ESP32_connect");
@@ -156,34 +222,16 @@ void setup() {
     error();
   }
 
-  String currentIP =  getCurrentIP();
-  String previousIP = getPreviousIP();
-
-  Serial.print("Current IP: ");
-  Serial.println(currentIP);
-  Serial.print("Previous IP: ");
-  Serial.println(previousIP);
-
-  if ((ALWAYS_NOTIFY) || (currentIP.compareTo(previousIP) != 0)) {
-    saveIP(currentIP);
-    notifyIP(previousIP,currentIP);
-  }
-  else {
-    Serial.println("no change to IP address");
-  }
-
-  digitalWrite(LED_BUILTIN,LOW);
-  delay(1000);
-  digitalWrite(LED_BUILTIN,HIGH);
-  deepSleep(SLEEP_INTERVAL);
+  check(true);    // always send notification on first init
 
 }
 
 void loop() {
 
-  // we should never get here
-
-  Serial.println("loop");
-
+  debugPrint(F("Delay for "));
+  debugPrint(SLEEP_INTERVAL_MS);
+  debugPrintln(F(" seconds"));
+  delay(SLEEP_INTERVAL_MS);
+  check(false);
 
 }
