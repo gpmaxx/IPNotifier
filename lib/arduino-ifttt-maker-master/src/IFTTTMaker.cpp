@@ -26,19 +26,13 @@ IFTTTMaker::IFTTTMaker(String key, Client &client)	{
 
 String IFTTTMaker::sendTriggerEvent(String eventName) {
 	String response="";
-  bool finishedHeaders = false;
-  bool currentLineIsBlank = true;
 	long now;
-	bool avail;
 	// Connect with IFTTT
 	if (client->connect(IFTTT_HOST, IFTTT_PORT)) {
 		Serial.println(".... connected to server");
 		String a="";
-		char c;
-		int ch_count=0;
 		client->println("GET https://maker.ifttt.com/trigger/"+eventName+"/with/key/"+_key);
 		now=millis();
-		avail=false;
     Serial.println("starting timer");
 		while (millis()-now<1500) {
 			while (client->available()) {
@@ -60,17 +54,12 @@ String IFTTTMaker::sendTriggerEvent(String eventName) {
 String IFTTTMaker::sendTriggerEventWithData(String eventName, JsonObject& payload) {
   Serial.println("send Trigger Event With Data");
 	String response="";
-  bool finishedHeaders = false;
-  bool currentLineIsBlank = true;
 	long now;
-	bool avail;
 	// Connect with IFTTT
   client->setTimeout(10000);
 	if (client->connect(IFTTT_HOST, IFTTT_PORT)) {
 		Serial.println(".... connected to server");
 		String a="";
-		char c;
-		int ch_count=0;
 		client->print("POST /trigger/"+eventName+"/with/key/"+_key);
     client->println(" HTTP/1.1");
     // Host header
@@ -89,7 +78,6 @@ String IFTTTMaker::sendTriggerEventWithData(String eventName, JsonObject& payloa
     client->println(out);
 
     now=millis();
-		avail=false;
     Serial.println("starting timer");
 		while (millis()-now<1500) {
 			while (client->available()) {

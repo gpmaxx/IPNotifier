@@ -1,32 +1,18 @@
-/*   A IP Notifier that emails when external IP address changes */
+/*   A IP Notifier that emails (using IFTTT) when external IP address changes 
 
-/*  Notes - the LED functionality only works properly if Serial is disabled
-    as the onboard LED using the TX pin
+    gpmaximus - 2019-29-05
 
-    ToDo: Test the 3 modes
-          Test with uploading to new device
-            - do you need to uploadFS first?
+    Note: Written in the end to use the ESP-01 module. This module doesn't support
+    deepsleep without some hardware modifiction. So this code is not suitable to run
+    on battery.
+
+    Switching to use the d1 mini or other esp8266 module deepsleep functionality
+    could be implemented.  Wake, check, sleep etc. with very little power use.
+    Possibly able to run on battry for months or years.
+
 */
 
-
-
-#include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <WiFiManager.h>
-#include <ESP8266HTTPClient.h>
-#define FS_NO_GLOBALS
-#include "FS.h"
-#include "IFTTTMaker.h"
-
-const char* SPIFFS_DATAFILE = "prevIP.dat";
-const char* IP_HOST = "api.ipify.org";
-const uint16_t IP_PORT = 80;
-const uint32_t SLEEP_INTERVAL_MS = 60 * 60 * 1000;  // 1 hour ;
-const char* IFTTT_KEY = "bZYS4W-feP_hGiN5ViibKkcNEF_Y24wdymZPq4HQ5d7";
-const String IFTTT_EVENTNAME = "ipchange";
-const uint16_t PER_DAY_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-#define DEBUG 
+#define DEBUG 1
 
 #ifdef DEBUG
   #define debugBegin(...) Serial.begin(__VA_ARGS__)
@@ -40,29 +26,36 @@ const uint16_t PER_DAY_INTERVAL_MS = 24 * 60 * 60 * 1000;
   #define debugPrintf(...)
 #endif
 
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include <WiFiManager.h>
+#include <ESP8266HTTPClient.h>
+#define FS_NO_GLOBALS
+#include "FS.h"
+#include "IFTTTMaker.h"
+
+const char* SPIFFS_DATAFILE = "prevIP.dat";
+const char* IP_HOST = "api.ipify.org";
+const uint16_t IP_PORT = 80;
+const char* IFTTT_KEY = "bZYS4W-feP_hGiN5ViibKkcNEF_Y24wdymZPq4HQ5d7";
+const String IFTTT_EVENTNAME = "ipchange";
+const char* AP_NAME = "IP_NOTE_CFG";
+
+const uint32_t CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const uint32_t NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /*  Always - send IP notification every interval
-    Per Day - send IP notification once per 24 hours or on change
+    Interval - send IP notification once per interval or upon change whichever if first
     Change Only - send IP notificationn only when there is a new IP
 
     Note - IP notification will always be sent on initial power on
 */
-enum NotificationMode {ALWAYS, PER_DAY, CHANGE_ONLY};
-const NotificationMode NOTIFY_MODE = PER_DAY;
+enum NotificationMode {ALWAYS, INTERVAL, CHANGE_ONLY};
+const NotificationMode NOTIFY_MODE = INTERVAL;
 
 void error() {
-    pinMode(LED_BUILTIN,OUTPUT);
-    while (true) {
-      digitalWrite(LED_BUILTIN,LOW);
-      delay(500);
-      digitalWrite(LED_BUILTIN,HIGH);
-      delay(500);
-    }
-}
-
-void error(const char* errorMsg) {
-  debugPrintln(errorMsg);
-  error();
+  debugPrintln(F("Critical Error"));
+  ESP.restart();
 }
 
 String getPreviousIP() {
@@ -71,10 +64,7 @@ String getPreviousIP() {
 
   fs::File file = SPIFFS.open(SPIFFS_DATAFILE,"r");
 
-  if (!file) {
-    debugPrintln(F("Error opening data file for read"));
-  }
-  else {
+  if (file) {
     while (file.available()) {
         theIP += file.readString();
     }
@@ -146,10 +136,6 @@ bool saveIP(const String newIP) {
 }
 
 void notifyIP(const String oldIP, const String newIP) {
-  debugPrint(F("You IP address has changed from "));
-  debugPrint(oldIP);
-  debugPrint(F(" to "));
-  debugPrintln(newIP);
 
   WiFiClient client;
   IFTTTMaker ifttt(IFTTT_KEY,client);
@@ -164,10 +150,13 @@ void notifyIP(const String oldIP, const String newIP) {
 }
 
 void indicate(const uint16_t durationMS) {
-  pinMode(LED_BUILTIN,OUTPUT);
-  digitalWrite(LED_BUILTIN,LOW);
-  delay(durationMS);
-  digitalWrite(LED_BUILTIN,HIGH);
+
+  #ifndef DEBUG
+    pinMode(LED_BUILTIN,OUTPUT);
+    digitalWrite(LED_BUILTIN,LOW);
+    delay(durationMS);
+    digitalWrite(LED_BUILTIN,HIGH);
+  #endif
 }
 
 void indicateStart() {
@@ -186,7 +175,7 @@ void check(const bool mandatoryNotify) {
 
   static uint32_t dayTimer = 0;
 
-  indicateStart();
+  //indicateStart();
   String currentIP =  getCurrentIP();
   String previousIP = getPreviousIP();
 
@@ -195,28 +184,65 @@ void check(const bool mandatoryNotify) {
   debugPrint(F("Previous IP: "));
   debugPrintln(previousIP);
 
-  if (mandatoryNotify || (NOTIFY_MODE == ALWAYS) || (currentIP.compareTo(previousIP) != 0) || ((NOTIFY_MODE == PER_DAY) && ((millis() - dayTimer) > PER_DAY_INTERVAL_MS)))  {
+  bool shouldNotify = false;
+  if (currentIP.compareTo(previousIP) != 0)  {
+      debugPrintln(F("IP has changed"));
+      shouldNotify = true;
+  }
+  else if (mandatoryNotify) {
+      debugPrintln(F("First run mandatory notification"));
+      shouldNotify = true;
+  }
+  else if (NOTIFY_MODE == ALWAYS) {
+      debugPrintln(F("Always Notify mode"));
+      shouldNotify = true;
+  }
+  else if (NOTIFY_MODE == INTERVAL) {
+    debugPrintln(F("Interval Mode"));
+    debugPrint(F("Interval (ms): "));
+    debugPrint(NOTIFY_INTERVAL_MS);
+    debugPrint(F(" Time elapsed (ms): "));
+    uint32_t elapsed = millis() - dayTimer;
+    debugPrintln(elapsed);
+    shouldNotify = (elapsed >= NOTIFY_INTERVAL_MS);
+  }
+  if (shouldNotify) {
     saveIP(currentIP);
     notifyIP(previousIP,currentIP);
     dayTimer = millis();
   }
   else {
-    debugPrintln(F("no change to IP address"));
+    debugPrintln(F("No notification criteria met"));
   }
 
-  indicateStop();
+//  indicateStop();
 
 }
 
 void setup() {
 
-  indicateStart();
+  //indicateStart();
 
   debugBegin(74880);
   debugPrintln(F("IP Notifier"));
+  debugPrint(F("Notification Mode: "));
+
+  switch (NOTIFY_MODE) {
+    case ALWAYS:
+      debugPrintln(F("Always notify"));
+      break;
+    case INTERVAL:
+      debugPrint(F("Interval - Every "));
+      debugPrint(NOTIFY_INTERVAL_MS);
+      debugPrintln(F("ms"));
+      break;
+    case CHANGE_ONLY:
+      debugPrintln(F("Only on change"));
+      break;
+  }
 
   WiFiManager wifiManager;
-  wifiManager.autoConnect("ESP32_connect");
+  wifiManager.autoConnect(AP_NAME);
 
   if (!SPIFFS.begin()) {
     error();
@@ -229,9 +255,9 @@ void setup() {
 void loop() {
 
   debugPrint(F("Delay for "));
-  debugPrint(SLEEP_INTERVAL_MS);
-  debugPrintln(F(" seconds"));
-  delay(SLEEP_INTERVAL_MS);
+  debugPrint(CHECK_INTERVAL_MS);
+  debugPrintln(F(" ms"));
+  delay(CHECK_INTERVAL_MS);
   check(false);
 
 }
