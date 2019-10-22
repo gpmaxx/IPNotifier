@@ -1,18 +1,18 @@
-/*   A IP Notifier that emails (using IFTTT) when external IP address changes 
+/*   A IP Notifier that emails (using IFTTT) when external IP address changes
 
-    gpmaximus - 2019-29-05
+    gpmaximus - 2019-05-29
 
-    Note: Written in the end to use the ESP-01 module. This module doesn't support
+    Note: Written to use the ESP-01 module. But the ESP-01 doesn't support
     deepsleep without some hardware modifiction. So this code is not suitable to run
     on battery.
 
-    Switching to use the d1 mini or other esp8266 module deepsleep functionality
+    Switching to use the d1 mini or other esp8266 module, deepsleep functionality
     could be implemented.  Wake, check, sleep etc. with very little power use.
     Possibly able to run on battry for months or years.
 
 */
 
-#define DEBUG 1
+#define DEBUG 0
 
 #ifdef DEBUG
   #define debugBegin(...) Serial.begin(__VA_ARGS__)
@@ -41,11 +41,11 @@ const char* IFTTT_KEY = "bZYS4W-feP_hGiN5ViibKkcNEF_Y24wdymZPq4HQ5d7";
 const String IFTTT_EVENTNAME = "ipchange";
 const char* AP_NAME = "IP_NOTE_CFG";
 
-const uint32_t CHECK_INTERVAL_MS = 60 * 60 * 1000;
-const uint32_t NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const uint32_t CHECK_INTERVAL_MS = 60 * 60 * 1000;   // once per hour
+const uint32_t NOTIFY_INTERVAL_MS = 24 * 60 * 60 * 1000; // once per day
 
 /*  Always - send IP notification every interval
-    Interval - send IP notification once per interval or upon change whichever if first
+    Interval - send IP notification once per interval or upon change whichever is first
     Change Only - send IP notificationn only when there is a new IP
 
     Note - IP notification will always be sent on initial power on
