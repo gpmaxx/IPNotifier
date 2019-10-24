@@ -37,7 +37,7 @@
 const char* SPIFFS_DATAFILE = "prevIP.dat";
 const char* IP_HOST = "api.ipify.org";
 const uint16_t IP_PORT = 80;
-const char* IFTTT_KEY = "bZYS4W-feP_hGiN5ViibKkcNEF_Y24wdymZPq4HQ5d7";
+const char* IFTTT_KEY = "xxxxx";
 const String IFTTT_EVENTNAME = "ipchange";
 const char* AP_NAME = "IP_NOTE_CFG";
 
